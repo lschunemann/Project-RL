@@ -134,3 +134,163 @@ def train_agent(env, agent, num_episodes, lr, discount_factor):
         agent.load_state_dict(best_state_dict)
     
     return episode_rewards
+
+
+def collect_rollouts(env, policy, num_steps):
+    states = []
+    actions = []
+    rewards = []
+    dones = []
+    values = []
+    log_probs = []
+    
+    state = env.reset()
+    episode_rewards = []
+    
+    for _ in range(num_steps):
+        state_tensor = torch.FloatTensor(state).to(device)
+        
+        with torch.no_grad():
+            dist = policy.get_probs(state_tensor)
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
+            _, value = policy.forward(state_tensor)
+        
+        next_state, reward, done = env.step(action.cpu().numpy())
+        
+        states.append(state_tensor)
+        actions.append(action)
+        rewards.append(reward)
+        dones.append(done)
+        values.append(value.squeeze())
+        log_probs.append(log_prob)
+        
+        state = next_state
+        episode_rewards.append(reward)
+        
+        if done:
+            state = env.reset()
+            episode_rewards = []
+    
+    # Convert lists to tensors
+    states = torch.stack(states)
+    actions = torch.stack(actions)
+    rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
+    dones = torch.tensor(dones, dtype=torch.float32).to(device)
+    values = torch.stack(values)
+    log_probs = torch.stack(log_probs)
+    
+    return states, actions, rewards, dones, values, log_probs
+
+def compute_gae(rewards, values, dones, next_value, gamma, lam):
+    advantages = torch.zeros_like(rewards).to(device)
+    last_gae = 0
+    
+    for t in reversed(range(len(rewards))):
+        if t == len(rewards) - 1:
+            next_non_terminal = 1.0 - dones[t]
+            next_values = next_value
+        else:
+            next_non_terminal = 1.0 - dones[t]
+            next_values = values[t + 1]
+        
+        delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
+        advantages[t] = last_gae = delta + gamma * lam * next_non_terminal * last_gae
+    
+    returns = advantages + values
+    return returns, advantages
+
+
+def train_ppo(env, policy, num_epochs, steps_per_epoch, batch_size, clip_ratio=0.2):
+    optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4, eps=1e-5)
+    
+    # PPO specific parameters
+    gamma = 0.99
+    lam = 0.95
+    target_kl = 0.01
+    value_loss_coef = 0.5
+    entropy_coef = 0.01
+    max_grad_norm = 0.5
+    
+    for epoch in range(num_epochs):
+        # Collect rollouts
+        with torch.no_grad():
+            states, actions, rewards, dones, values, old_log_probs = collect_rollouts(env, policy, steps_per_epoch)
+            
+            # Scale rewards
+            rewards = rewards / 1e6
+            
+            # Compute last value for GAE
+            last_state = torch.FloatTensor(env.reset()).to(device)
+            _, last_value = policy.forward(last_state)
+            last_value = last_value.squeeze()
+            
+            # Compute returns and advantages
+            returns, advantages = compute_gae(rewards, values, dones, last_value, gamma, lam)
+            
+            # Normalize advantages
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        # PPO update
+        for _ in range(4):  # Number of optimization epochs
+            # Generate random permutation of indices
+            indices = torch.randperm(steps_per_epoch)
+            
+            # Mini-batch updates
+            for start in range(0, steps_per_epoch, batch_size):
+                end = start + batch_size
+                batch_indices = indices[start:end]
+                
+                batch_states = states[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_advantages = advantages[batch_indices]
+                batch_returns = returns[batch_indices]
+                batch_old_log_probs = old_log_probs[batch_indices]
+                
+                # Compute current policy distributions
+                new_log_probs, entropy, values = policy.evaluate_actions(batch_states, batch_actions)
+                
+                # Compute ratio and clipped ratio
+                ratio = torch.exp(new_log_probs - batch_old_log_probs)
+                clipped_ratio = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio)
+                
+                # Compute policy loss
+                policy_loss = -torch.min(
+                    ratio * batch_advantages,
+                    clipped_ratio * batch_advantages
+                ).mean()
+                
+                # Compute value loss
+                value_loss = torch.nn.functional.mse_loss(values, batch_returns)
+                
+                # Compute entropy loss
+                entropy_loss = -entropy.mean()
+                
+                # Total loss
+                total_loss = (
+                    policy_loss +
+                    value_loss_coef * value_loss +
+                    entropy_coef * entropy_loss
+                )
+                
+                # Optimization step
+                optimizer.zero_grad()
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
+                optimizer.step()
+                
+                # Early stopping based on KL divergence
+                with torch.no_grad():
+                    kl = (batch_old_log_probs - new_log_probs).mean()
+                    if kl > 1.5 * target_kl:
+                        break
+        
+        # Logging
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch}")
+            print(f"Average Episode Reward: {rewards.sum().item():.2f}")
+            print(f"Policy Loss: {policy_loss.item():.4f}")
+            print(f"Value Loss: {value_loss.item():.4f}")
+            print(f"Entropy: {entropy.mean().item():.4f}")
+            print(f"KL Divergence: {kl.item():.4f}")
+            print("----------------------------------------")

@@ -25,7 +25,7 @@ class BasePolicy(nn.Module):
     def act(self, state):
         dist = self.get_probs(state)
         action = dist.sample()
-        return action.numpy()
+        return action.cpu().numpy()
     
     def compute_loss(self, episode, discount_factor=0.99):
         raise NotImplementedError
@@ -125,6 +125,8 @@ class ActorCritic(BasePolicy):
         # Initialize log_std
         with torch.no_grad():
             self.log_std.fill_(np.log(0.6))
+
+        self.to(device)
     
     def forward(self, x):
         x = self.state_normalizer(x.to(device))
@@ -217,3 +219,68 @@ class RunningNormalizer:
         
     def __call__(self, x):
         return (x - self.mean) / (self.std + 1e-8)
+    
+
+class PPO(BasePolicy):
+    def __init__(self, state_dim, hidden_dim, action_dim):
+        super(PPO, self).__init__(state_dim, hidden_dim, action_dim)
+        
+        self.state_normalizer = RunningNormalizer(state_dim).to(device)
+        self.return_normalizer = RunningNormalizer(1).to(device)
+        
+        # Shared features
+        self.shared = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU()
+        )
+        
+        # Actor network (mean)
+        self.actor_mean = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, action_dim)
+        )
+        
+        # Fixed minimum std to prevent collapse
+        self.min_std = 0.1
+        self.max_std = 1.0
+        self.log_std = nn.Parameter(torch.zeros(action_dim))
+        
+        # Critic network
+        self.critic = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
+        )
+        
+        self.apply(self._init_weights)
+        
+        # Initialize log_std
+        with torch.no_grad():
+            self.log_std.fill_(np.log(0.6))
+        
+        self.to(device)
+
+    def forward(self, x):
+        x = self.state_normalizer(x)
+        shared_features = self.shared(x)
+        action_mean = torch.tanh(self.actor_mean(shared_features))
+        value = self.critic(shared_features)
+        return action_mean, value
+    
+    def get_probs(self, state):
+        action_mean, _ = self.forward(state)
+        std = torch.exp(self.log_std).clamp(min=self.min_std, max=self.max_std)
+        dist = torch.distributions.Normal(action_mean, std)
+        return dist
+    
+    def evaluate_actions(self, states, actions):
+        dist = self.get_probs(states)
+        log_probs = dist.log_prob(actions.squeeze(-1))
+        entropy = dist.entropy()
+        _, values = self.forward(states)
+        return log_probs, entropy, values.squeeze(-1)

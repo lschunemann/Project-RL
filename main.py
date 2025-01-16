@@ -4,11 +4,11 @@ import argparse
 from agent import VPG, ActorCritic#TD3, PPO
 import numpy as np
 # from utils import run_episodes, sample_episode
-from utils import train_agent
+from utils import train_agent, train_ppo
 
 args = argparse.ArgumentParser()
 args.add_argument('--path', type=str, default='train.xlsx')
-args.add_argument('--algorithm', type=str, default='AC')
+args.add_argument('--algorithm', type=str, default='PPO')
 args = args.parse_args()
 
 np.set_printoptions(suppress=True, precision=2)
@@ -44,6 +44,14 @@ elif args.algorithm == "AC":
     except FileNotFoundError:
         # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
         train_agent(environment, agent, 1000, 0.99, 1e-3)
+        agent.save('models/ac_model')
+elif args.algorithm == "PPO":
+    agent = ActorCritic(state_dim, 128, action_dim)
+    try:
+        agent.load('models/ppo_model')
+    except FileNotFoundError:
+        # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
+        train_ppo(environment, agent, 1000, 2048, 64)
         agent.save('models/ac_model')
 else:
     raise ValueError("Invalid algorithm")
