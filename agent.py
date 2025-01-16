@@ -6,6 +6,7 @@ import numpy as np
 from utils import normalize_tensor, compute_returns
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
 
 class BasePolicy(nn.Module):
@@ -87,8 +88,8 @@ class ActorCritic(BasePolicy):
     def __init__(self, state_dim, hidden_dim, action_dim):
         super(ActorCritic, self).__init__(state_dim, hidden_dim, action_dim)
         
-        self.state_normalizer = RunningNormalizer(state_dim)
-        self.return_normalizer = RunningNormalizer(1)
+        self.state_normalizer = RunningNormalizer(state_dim).to(device)
+        self.return_normalizer = RunningNormalizer(1).to(device)
         
         # Shared features
         self.shared = nn.Sequential(
@@ -126,7 +127,7 @@ class ActorCritic(BasePolicy):
             self.log_std.fill_(np.log(0.6))
     
     def forward(self, x):
-        x = self.state_normalizer(x)
+        x = self.state_normalizer(x.to(device))
         shared_features = self.shared(x)
         action_mean = torch.tanh(self.actor_mean(shared_features))
         value = self.critic(shared_features)
@@ -189,8 +190,8 @@ class ActorCritic(BasePolicy):
 class RunningNormalizer:
     def __init__(self, shape):
         self.shape = shape
-        self.mean = torch.zeros(shape)
-        self.std = torch.ones(shape)
+        self.mean = torch.zeros(shape).to(device)
+        self.std = torch.ones(shape).to(device)
         self.count = 0
         
     def update(self, x):

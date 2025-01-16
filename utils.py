@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class ReplayBuffer(object):
     def __init__(self, state_dim, action_dim, max_size=int(1e6)):
         self.max_size = max_size
@@ -41,12 +43,12 @@ def normalize_tensor(tensor):
     return tensor
 
 def compute_returns(rewards, discount_factor=0.99):
-    returns = np.zeros_like(rewards.numpy())
+    returns = np.zeros_like(rewards.cpu().numpy())
     G = 0
     for i in reversed(range(len(rewards))):
-        G = rewards[i].item() + discount_factor * G
+        G = rewards[i].cpu().item() + discount_factor * G
         returns[i] = G
-    return torch.from_numpy(returns)
+    return torch.from_numpy(returns).to(device)
 
 def sample_episode(env, policy):
     states_list, actions_list, rewards_list, dones_list = [], [], [], []
@@ -55,7 +57,7 @@ def sample_episode(env, policy):
     done = False
     
     while not done:
-        state_tensor = torch.FloatTensor(state)
+        state_tensor = torch.FloatTensor(state).to(device)
         action = policy.act(state_tensor)
         
         next_state, reward, done = env.step(action)
@@ -67,11 +69,17 @@ def sample_episode(env, policy):
         
         state = next_state
     
-    # Convert to tensors
-    states = torch.FloatTensor(np.array(states_list))
-    actions = torch.FloatTensor(np.array(actions_list)).unsqueeze(-1)
-    rewards = torch.FloatTensor(np.array(rewards_list))
-    dones = torch.FloatTensor(np.array(dones_list))
+    # Convert to numpy arrays first
+    states_np = np.array(states_list, dtype=np.float32)
+    actions_np = np.array(actions_list, dtype=np.float32)
+    rewards_np = np.array(rewards_list, dtype=np.float32)
+    dones_np = np.array(dones_list, dtype=np.float32)
+    
+    # Convert to tensors on device
+    states = torch.from_numpy(states_np).to(device)
+    actions = torch.from_numpy(actions_np).unsqueeze(-1).to(device)
+    rewards = torch.from_numpy(rewards_np).to(device)
+    dones = torch.from_numpy(dones_np).to(device)
     
     return states, actions, rewards, dones
 
