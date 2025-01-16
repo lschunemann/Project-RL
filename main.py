@@ -1,7 +1,7 @@
 from env import DataCenterEnv
 import numpy as np
 import argparse
-from agent import VPG, ActorCritic#TD3, PPO
+from agent import VPG, ActorCritic, PPO
 import numpy as np
 # from utils import run_episodes, sample_episode
 from utils import train_agent, train_ppo
@@ -46,7 +46,7 @@ elif args.algorithm == "AC":
         train_agent(environment, agent, 1000, 0.99, 1e-3)
         agent.save('models/ac_model')
 elif args.algorithm == "PPO":
-    agent = ActorCritic(state_dim, 128, action_dim)
+    agent = PPO(state_dim, 128, action_dim)
     try:
         agent.load('models/ppo_model')
     except FileNotFoundError:
