@@ -323,14 +323,20 @@ def print_episode_summary(monitor, epoch):
     print("="*50)
     print(f"Episode Reward: {stats['episode_reward']:,.2f}")
     print(f"Episode Length: {stats['episode_length']}")
+    
     print("\nAction Statistics:")
     print(f"  Mean Action: {stats['mean_action']:.3f}")
     print(f"  Action Std: {stats['std_action']:.3f}")
     print(f"  Buy Percentage: {stats['buy_percentage']:.1f}%")
     print(f"  Sell Percentage: {stats['sell_percentage']:.1f}%")
+    print(f"  Hold Percentage: {stats['hold_percentage']:.1f}%")
+    
     print("\nStorage Statistics:")
     print(f"  Mean Storage: {stats['mean_storage']:.2f}")
+    print(f"  Storage Std: {stats['storage_std']:.2f}")
     print(f"  Storage Range: [{stats['min_storage']:.2f}, {stats['max_storage']:.2f}]")
+    print(f"  Final Storage: {stats['final_storage']:.2f}")
+    
     print("\nPrice Statistics:")
     print(f"  Mean Price: {stats['mean_price']:.2f}")
     print(f"  Price-Action Correlation: {stats['price_action_correlation']:.3f}")
@@ -339,17 +345,17 @@ def print_episode_summary(monitor, epoch):
     actions = np.array(monitor.current_episode['actions'])
     print("\nAction Distribution:")
     hist, bins = np.histogram(actions, bins=10, range=(-1, 1))
-    max_height = max(hist)
+    max_height = max(hist) if len(hist) > 0 else 1
     for i in range(len(hist)):
         bar_height = int((hist[i] / max_height) * 20)
         print(f"{bins[i]:6.2f} | {'#' * bar_height}")
 
-def visualize_episode(monitor):
+def visualize_episode(monitor, epoch):
     """Create and save plots for the episode"""
     import matplotlib.pyplot as plt
     
     # Create figure with subplots
-    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
+    fig, axes = plt.subplots(4, 1, figsize=(15, 15))
     
     # Plot actions and prices
     ax1 = axes[0]
@@ -357,32 +363,49 @@ def visualize_episode(monitor):
     prices = monitor.current_episode['prices']
     timesteps = range(len(actions))
     
-    ax1.plot(timesteps, actions, label='Actions', color='blue')
+    ax1.plot(timesteps, actions, label='Actions', color='blue', alpha=0.6)
     ax1_twin = ax1.twinx()
-    ax1_twin.plot(timesteps, prices, label='Prices', color='red', alpha=0.5)
-    ax1.set_ylabel('Action Value')
-    ax1_twin.set_ylabel('Price')
+    ax1_twin.plot(timesteps, prices, label='Prices', color='red', alpha=0.4)
+    ax1.set_ylabel('Action Value (Buy/Sell)', color='blue')
+    ax1_twin.set_ylabel('Price', color='red')
     ax1.set_title('Actions and Prices over Time')
+    ax1.grid(True, alpha=0.3)
+    
+    # Add legends with colored text
+    ax1.legend(loc='upper left', framealpha=0.9)
+    ax1_twin.legend(loc='upper right', framealpha=0.9)
     
     # Plot storage levels
     ax2 = axes[1]
     storage = monitor.current_episode['storage']
-    ax2.plot(timesteps, storage, label='Storage Level', color='green')
-    ax2.axhline(y=120, color='r', linestyle='--', label='Daily Requirement')
-    ax2.set_ylabel('Storage Level')
+    ax2.plot(timesteps, storage, label='Storage Level', color='green', linewidth=2)
+    ax2.axhline(y=120, color='r', linestyle='--', label='Daily Requirement', alpha=0.5)
+    ax2.fill_between(timesteps, storage, alpha=0.2, color='green')
+    ax2.set_ylabel('Storage Level (MWh)')
     ax2.set_title('Storage Level over Time')
     ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Plot rewards
+    ax3 = axes[2]
+    rewards = monitor.current_episode['rewards']
+    ax3.plot(timesteps, rewards, label='Step Reward', color='purple', alpha=0.6)
+    ax3.set_ylabel('Step Reward')
+    ax3.set_title('Rewards per Step')
+    ax3.grid(True, alpha=0.3)
     
     # Plot cumulative rewards
-    ax3 = axes[2]
-    rewards = np.cumsum(monitor.current_episode['rewards'])
-    ax3.plot(timesteps, rewards, label='Cumulative Reward', color='purple')
-    ax3.set_ylabel('Cumulative Reward')
-    ax3.set_xlabel('Timestep')
-    ax3.set_title('Cumulative Reward over Time')
+    ax4 = axes[3]
+    cum_rewards = np.cumsum(rewards)
+    ax4.plot(timesteps, cum_rewards, label='Cumulative Reward', color='orange', linewidth=2)
+    ax4.fill_between(timesteps, cum_rewards, alpha=0.2, color='orange')
+    ax4.set_ylabel('Cumulative Reward')
+    ax4.set_xlabel('Timestep')
+    ax4.set_title('Cumulative Reward over Time')
+    ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(f'episode_summary_{len(monitor.episode_rewards)}.png')
+    plt.savefig(f'plots/episode_summary_epoch_{epoch}.png')
     plt.close()
 
 class PPOMonitor:
@@ -419,7 +442,7 @@ class PPOMonitor:
     
     def add_step(self, state, action, reward, value):
         self.current_episode['rewards'].append(reward)
-        self.current_episode['actions'].append(action)
+        self.current_episode['actions'].append(action[0])  # Take first element since action is array
         self.current_episode['states'].append(state)
         self.current_episode['values'].append(value)
         self.current_episode['storage'].append(state[0])  # Assuming storage is first state component
@@ -433,6 +456,12 @@ class PPOMonitor:
         storage = np.array(self.current_episode['storage'])
         prices = np.array(self.current_episode['prices'])
         
+        # Calculate correlation only if we have enough data points
+        try:
+            price_action_corr = np.corrcoef(prices, actions)[0,1]
+        except:
+            price_action_corr = 0.0
+        
         stats = {
             'mean_action': actions.mean(),
             'std_action': actions.std(),
@@ -440,12 +469,16 @@ class PPOMonitor:
             'min_action': actions.min(),
             'buy_percentage': (actions > 0).mean() * 100,
             'sell_percentage': (actions < 0).mean() * 100,
+            'hold_percentage': (np.abs(actions) < 0.1).mean() * 100,  # Added hold percentage
             'mean_storage': storage.mean(),
             'max_storage': storage.max(),
             'min_storage': storage.min(),
             'mean_price': prices.mean(),
-            'price_action_correlation': np.corrcoef(prices, actions)[0,1],
+            'price_action_correlation': price_action_corr,
             'episode_reward': sum(self.current_episode['rewards']),
-            'episode_length': len(self.current_episode['rewards'])
+            'episode_length': len(self.current_episode['rewards']),
+            'storage_std': storage.std(),
+            'final_storage': storage[-1] if len(storage) > 0 else 0
         }
         return stats
+    
