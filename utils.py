@@ -35,44 +35,24 @@ class ReplayBuffer(object):
         )
 
 
-def compute_reinforce_loss(policy, episode, discount_factor=0.99):
-    states, actions, rewards, _ = episode
-    
-    # Calculate discounted returns
-    returns = []
-    G = 0
-    for r in reversed(rewards.numpy()):
-        G = r + discount_factor * G
-        returns.insert(0, G)
-    returns = torch.tensor(returns, dtype=torch.float32)
-    
-    # Normalize returns
-    if len(returns) > 1:  # Only normalize if we have more than one return
-        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
-    
-    # Get action log probabilities
-    dist = policy.get_probs(states)
-    log_probs = dist.log_prob(actions.squeeze())
-    
-    # Calculate policy loss
-    policy_loss = -(log_probs * returns).mean()
-    
-    # Add entropy term for exploration
-    entropy = dist.entropy().mean()
-    loss = policy_loss - 0.01 * entropy  # Small entropy coefficient
-    
-    return loss
+def normalize_tensor(tensor):
+    if len(tensor) > 1:
+        return (tensor - tensor.mean()) / (tensor.std() + 1e-8)
+    return tensor
 
+def compute_returns(rewards, discount_factor=0.99):
+    returns = np.zeros_like(rewards.numpy())
+    G = 0
+    for i in reversed(range(len(rewards))):
+        G = rewards[i].item() + discount_factor * G
+        returns[i] = G
+    return torch.from_numpy(returns)
 
 def sample_episode(env, policy):
-    states = []
-    actions = []
-    rewards = []
-    dones = []
+    states_list, actions_list, rewards_list, dones_list = [], [], [], []
     
     state = env.reset()
     done = False
-    episode_reward = 0
     
     while not done:
         state_tensor = torch.FloatTensor(state)
@@ -80,46 +60,69 @@ def sample_episode(env, policy):
         
         next_state, reward, done = env.step(action)
         
-        # Store experience
-        states.append(state_tensor)
-        actions.append(torch.FloatTensor([action]))
-        rewards.append(reward)
-        dones.append(done)
+        states_list.append(state)
+        actions_list.append(action)
+        rewards_list.append(reward)
+        dones_list.append(done)
         
         state = next_state
-        episode_reward += reward
     
     # Convert to tensors
-    states = torch.stack(states)
-    actions = torch.stack(actions)
-    rewards = torch.tensor(rewards, dtype=torch.float32)
-    dones = torch.tensor(dones, dtype=torch.float32)
+    states = torch.FloatTensor(np.array(states_list))
+    actions = torch.FloatTensor(np.array(actions_list)).unsqueeze(-1)
+    rewards = torch.FloatTensor(np.array(rewards_list))
+    dones = torch.FloatTensor(np.array(dones_list))
     
     return states, actions, rewards, dones
 
-
-def run_episodes(env, policy, num_episodes, discount_factor, lr, sampling_func=sample_episode):
-    optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+def train_agent(env, agent, num_episodes, lr, discount_factor):
+    optimizer = torch.optim.Adam(agent.parameters(), lr=lr)
     episode_rewards = []
+    running_reward = 0
+    best_reward = float('-inf')
+    patience = 100  # Increased patience
+    no_improvement = 0
+    best_state_dict = None
     
     for i in range(num_episodes):
-        # Collect episode data
-        episode = sampling_func(env, policy)
+        # Add exploration noise
+        with torch.no_grad():
+            exploration_std = max(1.0 * (1 - i/num_episodes), 0.3)  # Linear decay
+            agent.log_std.data = torch.log(torch.ones_like(agent.log_std) * exploration_std)
+        
+        episode = sample_episode(env, agent)
         _, _, rewards, _ = episode
         total_reward = rewards.sum().item()
         
-        # Compute loss and update policy
-        loss = compute_reinforce_loss(policy, episode, discount_factor)
+        running_reward = 0.05 * total_reward + (1 - 0.05) * running_reward
+        
+        loss, metrics = agent.compute_loss(episode, discount_factor)
         
         optimizer.zero_grad()
         loss.backward()
-        # Clip gradients for stability
-        torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
+        torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=0.5)
         optimizer.step()
         
         episode_rewards.append(total_reward)
         
+        # Save best model
+        if total_reward > best_reward:
+            best_reward = total_reward
+            best_state_dict = {k: v.cpu().clone() for k, v in agent.state_dict().items()}
+            no_improvement = 0
+        else:
+            no_improvement += 1
+        
+        if no_improvement >= patience:
+            print(f"Early stopping at episode {i}")
+            break
+        
         if i % 10 == 0:
-            print(f"Episode {i}, Total Reward: {total_reward:.2f}, Loss: {loss.item():.4f}")
+            metrics_str = ', '.join([f"{k}: {v:.4f}" for k, v in metrics.items()])
+            print(f"Episode {i}, Reward: {total_reward:.2f}, Running Reward: {running_reward:.2f}, {metrics_str}")
+    
+    # Load best model
+    if best_state_dict is not None:
+        agent.load_state_dict(best_state_dict)
     
     return episode_rewards
