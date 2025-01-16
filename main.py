@@ -1,13 +1,14 @@
 from env import DataCenterEnv
 import numpy as np
 import argparse
-from agent import VPG#TD3, PPO
+from agent import VPG, ActorCritic#TD3, PPO
 import numpy as np
-from utils import run_episodes, sample_episode
+# from utils import run_episodes, sample_episode
+from utils import train_agent
 
 args = argparse.ArgumentParser()
 args.add_argument('--path', type=str, default='train.xlsx')
-args.add_argument('--algorithm', type=str, default='VPG')
+args.add_argument('--algorithm', type=str, default='AC')
 args = args.parse_args()
 
 np.set_printoptions(suppress=True, precision=2)
@@ -33,8 +34,17 @@ if args.algorithm == "VPG":
     try:
         agent.load('models/vpg_model')
     except FileNotFoundError:
-        run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
+        # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
+        train_agent(environment, agent, 1000, 0.99, 1e-3)
         agent.save('models/vpg_model')
+elif args.algorithm == "AC":
+    agent = ActorCritic(state_dim, 128, action_dim)
+    try:
+        agent.load('models/ac_model')
+    except FileNotFoundError:
+        # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
+        train_agent(environment, agent, 1000, 0.99, 1e-3)
+        agent.save('models/ac_model')
 else:
     raise ValueError("Invalid algorithm")
 
