@@ -208,14 +208,15 @@ def compute_gae(rewards, values, dones, next_value, gamma, lam):
 def train_ppo(env, policy, num_epochs, steps_per_epoch, batch_size, clip_ratio=0.2):
     optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4, eps=1e-5)
     
-    # PPO specific parameters
+    # PPO parameters
     gamma = 0.99
     lam = 0.95
-    target_kl = 0.01
+    target_kl = 0.015
     value_loss_coef = 0.5
     entropy_coef = 0.01
     max_grad_norm = 0.5
-
+    
+    best_reward = float('-inf')
     monitor = PPOMonitor()
     
     for epoch in range(num_epochs):
@@ -224,7 +225,7 @@ def train_ppo(env, policy, num_epochs, steps_per_epoch, batch_size, clip_ratio=0
             states, actions, rewards, dones, values, old_log_probs = collect_rollouts(env, policy, steps_per_epoch, monitor)
             
             # Scale rewards
-            rewards = rewards / 1e6
+            rewards = rewards / 1e4  # Adjust scaling factor
             
             # Compute last value for GAE
             last_state = torch.FloatTensor(env.reset()).to(device)
@@ -238,11 +239,14 @@ def train_ppo(env, policy, num_epochs, steps_per_epoch, batch_size, clip_ratio=0
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # PPO update
-        for _ in range(4):  # Number of optimization epochs
-            # Generate random permutation of indices
+        policy_losses = []
+        value_losses = []
+        kl_divs = []
+        
+        # Multiple epochs of optimization
+        for _ in range(4):
             indices = torch.randperm(steps_per_epoch)
             
-            # Mini-batch updates
             for start in range(0, steps_per_epoch, batch_size):
                 end = start + batch_size
                 batch_indices = indices[start:end]
@@ -253,65 +257,73 @@ def train_ppo(env, policy, num_epochs, steps_per_epoch, batch_size, clip_ratio=0
                 batch_returns = returns[batch_indices]
                 batch_old_log_probs = old_log_probs[batch_indices]
                 
-                # Compute current policy distributions
-                new_log_probs, entropy, values = policy.evaluate_actions(batch_states, batch_actions)
+                # Get current policy distributions
+                dist = policy.get_probs(batch_states)
+                new_log_probs = dist.log_prob(batch_actions.squeeze())
+                entropy = dist.entropy().mean()
                 
                 # Compute ratio and clipped ratio
                 ratio = torch.exp(new_log_probs - batch_old_log_probs)
                 clipped_ratio = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio)
                 
-                # Compute policy loss
+                # Policy loss
                 policy_loss = -torch.min(
                     ratio * batch_advantages,
                     clipped_ratio * batch_advantages
                 ).mean()
                 
-                # Compute value loss
-                value_loss = torch.nn.functional.mse_loss(values, batch_returns)
-                
-                # Compute entropy loss
-                entropy_loss = -entropy.mean()
+                # Value loss
+                _, values = policy.forward(batch_states)
+                value_loss = torch.nn.functional.mse_loss(values.squeeze(), batch_returns)
                 
                 # Total loss
-                total_loss = (
+                loss = (
                     policy_loss +
-                    value_loss_coef * value_loss +
-                    entropy_coef * entropy_loss
+                    value_loss_coef * value_loss -
+                    entropy_coef * entropy
                 )
                 
                 # Optimization step
                 optimizer.zero_grad()
-                total_loss.backward()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
                 optimizer.step()
                 
-                # Early stopping based on KL divergence
+                # Track metrics
                 with torch.no_grad():
                     kl = (batch_old_log_probs - new_log_probs).mean()
                     if kl > 1.5 * target_kl:
                         break
+                    
+                    policy_losses.append(policy_loss.item())
+                    value_losses.append(value_loss.item())
+                    kl_divs.append(kl.item())
         
         # Logging
-        # Print monitoring information
         if epoch % 10 == 0:
             print_episode_summary(monitor, epoch)
-            visualize_episode(monitor)
+            visualize_episode(monitor, epoch)
             
-            # Additional policy checks
+            # Policy behavior check
             test_states = torch.FloatTensor([
-                [0, 50, 1, 1],    # Low storage, medium price, start of day
+                [0, 50, 1, 1],     # Low storage, medium price, start of day
                 [100, 50, 12, 1],  # High storage, medium price, middle of day
                 [60, 100, 23, 1],  # Medium storage, high price, end of day
                 [20, 10, 12, 1],   # Low storage, low price, middle of day
             ]).to(device)
             
             with torch.no_grad():
-                dist = policy.get_probs(test_states)
-                actions = dist.sample()
+                actions = policy.act(test_states)
                 print("\nPolicy Behavior Check:")
                 print("State (Storage, Price, Hour, Day) -> Action")
-                for state, action in zip(test_states, actions):
-                    print(f"[{state[0]:3.0f}, {state[1]:3.0f}, {state[2]:2.0f}, {state[3]:2.0f}] -> {action.item():6.3f}")
+                for state, action in zip(test_states.cpu().numpy(), actions):
+                    print(f"[{state[0]:3.0f}, {state[1]:3.0f}, {state[2]:2.0f}, {state[3]:2.0f}] -> {action[0]:6.3f}")
+            
+            print(f"\nMean Policy Loss: {np.mean(policy_losses):.4f}")
+            print(f"Mean Value Loss: {np.mean(value_losses):.4f}")
+            print(f"Mean KL Divergence: {np.mean(kl_divs):.4f}")
+    
+    return policy
 
 
 def print_episode_summary(monitor, epoch):

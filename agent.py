@@ -195,13 +195,11 @@ class RunningNormalizer:
         self.mean = torch.zeros(shape).to(device)
         self.std = torch.ones(shape).to(device)
         self.count = 0
-
-    def to(self, device):
-        self.mean = self.mean.to(device)
-        self.std = self.std.to(device)
-        return self
         
     def update(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x).float().to(device)
+        
         batch_mean = x.mean(0)
         batch_std = x.std(0)
         batch_count = x.shape[0]
@@ -218,15 +216,16 @@ class RunningNormalizer:
         self.count += batch_count
         
     def __call__(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x).float().to(device)
         return (x - self.mean) / (self.std + 1e-8)
-    
 
 class PPO(BasePolicy):
     def __init__(self, state_dim, hidden_dim, action_dim):
         super(PPO, self).__init__(state_dim, hidden_dim, action_dim)
         
-        self.state_normalizer = RunningNormalizer(state_dim).to(device)
-        self.return_normalizer = RunningNormalizer(1).to(device)
+        self.state_normalizer = RunningNormalizer(state_dim)
+        self.return_normalizer = RunningNormalizer(1)
         
         # Shared features
         self.shared = nn.Sequential(
@@ -242,13 +241,13 @@ class PPO(BasePolicy):
         self.actor_mean = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            nn.Linear(hidden_dim // 2, action_dim)
+            nn.Linear(hidden_dim // 2, action_dim),
+            nn.Tanh()  # Force output to [-1, 1]
         )
         
-        # Fixed minimum std to prevent collapse
-        self.min_std = 0.1
-        self.max_std = 1.0
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
+        # Fixed log_std parameter
+        initial_std = 0.5
+        self.log_std = nn.Parameter(torch.ones(action_dim) * np.log(initial_std))
         
         # Critic network
         self.critic = nn.Sequential(
@@ -258,29 +257,24 @@ class PPO(BasePolicy):
         )
         
         self.apply(self._init_weights)
-        
-        # Initialize log_std
-        with torch.no_grad():
-            self.log_std.fill_(np.log(0.6))
-        
         self.to(device)
 
     def forward(self, x):
         x = self.state_normalizer(x)
         shared_features = self.shared(x)
-        action_mean = torch.tanh(self.actor_mean(shared_features))
+        action_mean = self.actor_mean(shared_features)  # Already in [-1, 1]
         value = self.critic(shared_features)
         return action_mean, value
     
     def get_probs(self, state):
         action_mean, _ = self.forward(state)
-        std = torch.exp(self.log_std).clamp(min=self.min_std, max=self.max_std)
+        std = torch.exp(self.log_std).clamp(min=0.1, max=0.5)  # Tighter std bounds
         dist = torch.distributions.Normal(action_mean, std)
         return dist
     
-    def evaluate_actions(self, states, actions):
-        dist = self.get_probs(states)
-        log_probs = dist.log_prob(actions.squeeze(-1))
-        entropy = dist.entropy()
-        _, values = self.forward(states)
-        return log_probs, entropy, values.squeeze(-1)
+    @torch.no_grad()
+    def act(self, state):
+        dist = self.get_probs(state)
+        action = dist.sample()
+        # Ensure actions are in [-1, 1]
+        return torch.clamp(action, -1, 1).cpu().numpy()
