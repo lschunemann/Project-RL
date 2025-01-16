@@ -193,6 +193,11 @@ class RunningNormalizer:
         self.mean = torch.zeros(shape).to(device)
         self.std = torch.ones(shape).to(device)
         self.count = 0
+
+    def to(self, device):
+        self.mean = self.mean.to(device)
+        self.std = self.std.to(device)
+        return self
         
     def update(self, x):
         batch_mean = x.mean(0)
