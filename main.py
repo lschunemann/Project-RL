@@ -5,6 +5,7 @@ from agent import VPG, ActorCritic, PPO
 import numpy as np
 # from utils import run_episodes, sample_episode
 from utils import train_agent, train_ppo
+from pathlib import Path
 
 args = argparse.ArgumentParser()
 args.add_argument('--path', type=str, default='train.xlsx')
@@ -31,28 +32,25 @@ max_action = float(environment.continuous_action_space.high[0])
 #     agent.load('models/ppo_model')
 if args.algorithm == "VPG":
     agent = VPG(state_dim, 128, action_dim)
-    try:
-        agent.load('models/vpg_model')
-    except FileNotFoundError:
-        # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
+    if (Path.cwd() / 'models' / 'vpg_model.pth').exists():
+        agent.load('models/vpg_model.pth')
+    else:
         train_agent(environment, agent, 1000, 0.99, 1e-3)
-        agent.save('models/vpg_model')
+        agent.save('models/vpg_model.pth')
 elif args.algorithm == "AC":
     agent = ActorCritic(state_dim, 128, action_dim)
-    try:
-        agent.load('models/ac_model')
-    except FileNotFoundError:
-        # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
+    if (Path.cwd() / 'models' / 'ac_model.pth').exists():
+        agent.load('models/ac_model.pth')
+    else:
         train_agent(environment, agent, 1000, 0.99, 1e-3)
-        agent.save('models/ac_model')
+        agent.save('models/ac_model.pth')
 elif args.algorithm == "PPO":
     agent = PPO(state_dim, 128, action_dim)
-    try:
-        agent.load('models/ppo_model')
-    except FileNotFoundError:
-        # run_episodes(environment, agent, 1000, 0.99, 1e-3, sample_episode)
-        train_ppo(environment, agent, 1000, 2048, 64)
-        agent.save('models/ac_model')
+    if (Path.cwd() / 'models' / 'ppo_model.pth').exists():
+        agent.load('models/ppo_model.pth')
+    else:
+        train_agent(environment, agent, 1000, 0.99, 1e-3)
+        agent.save('models/ppo_model.pth')
 else:
     raise ValueError("Invalid algorithm")
 
