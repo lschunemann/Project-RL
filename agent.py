@@ -278,3 +278,53 @@ class PPO(BasePolicy):
         action = dist.sample()
         # Ensure actions are in [-1, 1]
         return torch.clamp(action, -1, 1).cpu().numpy()
+    
+class Random(BasePolicy):
+    def __init__(self):
+        return
+    #     # super().__init__()
+    #     self.to(device)
+
+    def act(self, state):
+        return np.random.uniform(-1,1)
+    
+class Do_nothing(BasePolicy):
+    def __init__(self):
+        return
+    #     # super().__init__()
+    #     self.to(device)
+
+    def act(self, state):
+        return 0
+    
+class Sell_Max(BasePolicy):
+    def __init__(self):
+        return
+    #     # super().__init__()
+    #     self.to(device)
+
+    def act(self, state):
+        return -1
+    
+class Buy_Max(BasePolicy):
+    def __init__(self):
+        return
+    #     # super().__init__()
+    #     self.to(device)
+
+    def act(self, state):
+        return 1
+    
+class Daily_Requirement(BasePolicy):
+    def __init__(self):
+        return
+    #     # super().__init__()
+    #     self.to(device)
+
+    def act(self, state):
+        if state[0] < 120:
+            return 1
+        elif state[1] > 120:
+            return -((state[1] - 120) / 10 ) % 10
+        else: return 0
+    

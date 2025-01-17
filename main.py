@@ -1,11 +1,14 @@
 from env import DataCenterEnv
 import numpy as np
 import argparse
-from agent import VPG, ActorCritic, PPO
+from agent import VPG, ActorCritic, PPO, Random, Sell_Max, Buy_Max, Do_nothing, Daily_Requirement
 import numpy as np
 # from utils import run_episodes, sample_episode
 from utils import train_agent, train_ppo
 from pathlib import Path
+
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 args = argparse.ArgumentParser()
 args.add_argument('--path', type=str, default='train.xlsx')
@@ -46,11 +49,21 @@ elif args.algorithm == "AC":
         agent.save('models/ac_model.pth')
 elif args.algorithm == "PPO":
     agent = PPO(state_dim, 128, action_dim)
-    if (Path.cwd() / 'models' / 'ppo_model.pth').exists():
-        agent.load('models/ppo_model.pth')
-    else:
-        train_agent(environment, agent, 1000, 0.99, 1e-3)
-        agent.save('models/ppo_model.pth')
+    # if (Path.cwd() / 'models' / 'ppo_model.pth').exists():
+    #     agent.load('models/ppo_model.pth')
+    # else:
+    train_ppo(environment, agent, 1000, 2048, 64)
+    agent.save('models/ppo_model.pth')
+elif args.algorithm == 'random':
+    agent = Random()
+elif args.algorithm == 'do_nothing':
+    agent = Do_nothing()
+elif args.algorithm == 'sell_max':
+    agent = Sell_Max()
+elif args.algorithm == 'buy_max':
+    agent = Buy_Max()
+elif args.algorithm == 'daily_req':
+    agent = Daily_Requirement()
 else:
     raise ValueError("Invalid algorithm")
 

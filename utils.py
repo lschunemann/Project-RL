@@ -302,7 +302,7 @@ def train_ppo(env, policy, num_epochs, steps_per_epoch, batch_size, clip_ratio=0
         # Logging
         if epoch % 10 == 0:
             print_episode_summary(monitor, epoch)
-            visualize_episode(monitor, epoch)
+            # visualize_episode(monitor, epoch)
             
             # Policy behavior check
             test_states = torch.FloatTensor([
