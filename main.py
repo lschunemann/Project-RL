@@ -1,11 +1,12 @@
 from env import DataCenterEnv
 import numpy as np
 import argparse
-from agent import VPG, ActorCritic, PPO, Random, Sell_Max, Buy_Max, Do_nothing, Daily_Requirement
+from agent import VPG, ActorCritic, PPO, Random, Sell_Max, Buy_Max, Do_nothing, Daily_Requirement, ImprovedQAgent, Double_Q
 import numpy as np
 # from utils import run_episodes, sample_episode
 from utils import train_agent, train_ppo
 from pathlib import Path
+from QAgent import QAgent
 
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
@@ -64,8 +65,27 @@ elif args.algorithm == 'buy_max':
     agent = Buy_Max()
 elif args.algorithm == 'daily_req':
     agent = Daily_Requirement()
+elif args.algorithm == 'tabular_q':
+    agent = QAgent(env=environment)
+    agent.train(episodes=1000, bias_correction=False)
+    agent.save_q_table('models/q_table.npy')
+elif args.algorithm == 'tabular_double_q':
+    agent = Double_Q(environment,
+                      target_update_freq=100000, 
+                      alpha=0.05,
+                      gamma=0.99,
+                      epsilon=1.0,
+                      epsilon_decay=0.998,
+                      epsilon_min=0.05)
+    agent.train(episodes=5000)
+    # agent.save_q_table('models/double')
 else:
     raise ValueError("Invalid algorithm")
+
+if args.path == 'train.xlsx':
+    print(f"Training policy: {args.algorithm}")
+else:
+    print(f"Evaluating policy: {args.algorithm}")
 
 while not terminated:
     # agent is your own imported agent class
