@@ -9,11 +9,11 @@ from env import DataCenterEnv
 
 class QAgent:
     
-    def __init__(self, env, alpha=0.1, beta=0.983, tao=0.15, gamma=0.99, gamma_decay=0.999, gamma_min=0.03, epsilon=1.0, epsilon_decay=0.995, epsilon_min=0.01, random_seed=1,
+    def __init__(self, env, alpha=0.1, beta=0.983, tau=0.15, gamma=0.99, gamma_decay=0.999, gamma_min=0.03, epsilon=1.0, epsilon_decay=0.995, epsilon_min=0.01, random_seed=1,
                  random_init=False, adaptive_lr=True, moving_average=True):
         self.env = env         
         self.alpha = alpha                                          # Learning rate
-        self.tao = tao                                              # Reward shaping parameter
+        self.tau = tau                                              # Reward shaping parameter
         self.beta = beta                                            # Moving average rate
         self.gamma = gamma                                          # Discount factor
         self.gamma_decay = gamma_decay                              # Decay rate for gamma
@@ -24,13 +24,14 @@ class QAgent:
         self.adaptive_lr = adaptive_lr                              # Adaptive learning rate
         self.moving_average = moving_average                        # Moving average for reward shaping
         self.max_storage = 290                                      # Maximum storage level
+        self.max_steps = 0                                          # Number of steps
 
         np.random.seed(random_seed)                                 # Set random seed for reproducibility
         
         self.hyperparameters = {
             "alpha": alpha,
             "beta": beta,  
-            "tao": tao,
+            "tau": tau,
             "gamma": gamma,
             "gamma_decay": gamma_decay,
             "gamma_min": gamma_min,
@@ -44,11 +45,11 @@ class QAgent:
         }
 
         # Define bins for discretization
-        self.storage_bins = np.linspace(0, self.max_storage, 5)         # Storage level: 4 bins
+        self.storage_bins = np.linspace(0, self.max_storage, 5)         # Storage: 4 bins
         self.hour_bins =  np.linspace(1, 24, 24)                        # Hour: 24 bins
         self.action_space = [-1, 0, 1]                                  # Actions: sell, hold, buy    
         
-        self.state_action_number = (len(self.storage_bins)-1) * len(self.hour_bins) * len(self.action_space)
+        self.state_action_number = (len(self.storage_bins)-1) * len(self.hour_bins) * len(self.action_space) # 288 state-action pairs
         
         self.average_price = 50.60                                  # Average price for reward shaping
         self.best_result = 0                                        # Best cumulative reward
@@ -56,7 +57,7 @@ class QAgent:
         # Initialize Q-table
         if random_init == "Uniform":
             self.q_table = np.random.uniform(low=-1, high=1, size=(
-                len(self.storage_bins) - 1,                     # Storage bins
+                len(self.storage_bins),                         # Storage bins
                 len(self.hour_bins),                            # Hour bins
                 len(self.action_space)                          # Actions
             ))  
@@ -106,11 +107,11 @@ class QAgent:
     def reward_shaping(self, reward, action, storage_level):
         """Apply reward shaping to the reward."""
         if action == 0:
-            return reward + self.tao * storage_level
-        elif action > 0:
-            return reward + self.tao * storage_level + 10 * self.average_price
-        elif action < 0:
-            return reward + self.tao * storage_level - 10 * self.average_price
+            return reward + self.tau * storage_level
+        elif action == 1:
+            return reward + self.tau * storage_level + 10 * self.average_price
+        elif action == -1:
+            return reward + self.tau * storage_level - 10 * self.average_price
         else:
             raise ValueError('Action not recognized')
 
@@ -170,7 +171,10 @@ class QAgent:
 
                 state = next_state
                 total_reward += reward
-  
+                
+                if done and episode == 1:
+                    self.max_steps = step
+
             
                 
             if self.adaptive_lr:
@@ -189,7 +193,7 @@ class QAgent:
         self.best_result = round(max(self.cumulative_rewards), 2)  
         end = time.time()
         
-        print(f"Training completed in {end-start:.2f} seconds.")
+        print(f"Training completed in {end-start:.2f}s ({(end-start)/episodes:.2f}s per episode)")
         print(f"Best Cumulative Reward: {max(self.cumulative_rewards)}")
 
 
@@ -232,6 +236,10 @@ class QAgent:
         last_reward = total_rewards[-1]
         print(f"Last year reward: {last_reward}")
         
+        path = "figures/"
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
+        
         if years > 1:
             plt.figure(figsize=(8, 6))
             plt.plot(total_rewards, color="blue")
@@ -239,6 +247,7 @@ class QAgent:
             plt.xlabel("Year", fontsize=10)
             plt.ylabel("Total Reward", fontsize=10)
             plt.tick_params(axis='both', which='major', labelsize=10)
+            plt.savefig('figures/total_rewards.png')
             plt.show()
         else:
             # Plot prices and actions in the same figure
@@ -256,56 +265,22 @@ class QAgent:
             ax2.tick_params(axis='y', labelcolor=color)
             
             fig.tight_layout()
+            fig.savefig('figures/prices_actions.png')
             plt.show()
             
-            fig.savefig('figures/prices_actions.png')
         
         if average:           
             return avg_reward
         else:    
             return last_reward
-
-
-    def plot_metrics(self):
-        """Plot cumulative rewards, rewards per step, storage levels, actions, and prices."""
-        _, axes = plt.subplots(5, 1, figsize=(8, 12), constrained_layout=True)
-
-        axes[0].plot(self.cumulative_rewards, color="blue")
-        axes[0].set_title("Cumulative Rewards per Episode", fontsize=10)
-        axes[0].set_xlabel("Episode", fontsize=8)
-        axes[0].set_ylabel("Cumulative Reward", fontsize=8)
-        axes[0].tick_params(axis='both', which='major', labelsize=8)
-
-        axes[1].plot(self.rewards_per_step, color="green")
-        axes[1].set_title("Rewards per Step", fontsize=10)
-        axes[1].set_xlabel("Step", fontsize=8)
-        axes[1].set_ylabel("Reward", fontsize=8)
-        axes[1].tick_params(axis='both', which='major', labelsize=8)
-
-        axes[2].plot(self.storage_levels, color="orange")
-        axes[2].set_title("Storage Levels over Time", fontsize=10)
-        axes[2].set_xlabel("Step", fontsize=8)
-        axes[2].set_ylabel("Storage Level (MWh)", fontsize=8)
-        axes[2].tick_params(axis='both', which='major', labelsize=8)
-
-        axes[3].hist(self.actions, bins=3, color="purple", alpha=0.7)
-        axes[3].set_title("Action Distribution", fontsize=10)
-        axes[3].set_xlabel("Action", fontsize=8)
-        axes[3].set_ylabel("Frequency", fontsize=8)
-        axes[3].tick_params(axis='both', which='major', labelsize=8)
-
-        axes[4].plot(self.prices, color="red")
-        axes[4].set_title("Prices over Time", fontsize=10)
-        axes[4].set_xlabel("Step", fontsize=8)
-        axes[4].set_ylabel("Price", fontsize=8)
-        axes[4].tick_params(axis='both', which='major', labelsize=8)
-
-        plt.tight_layout()
-        plt.show()
-        
+                
         
     def show_rewards(self, average=False):
         """Plot rewards per episode with confidence intervals."""
+        path = "figures/"
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
+        
         if average:
             plt.figure(figsize=(8, 6))
             plt.plot(self.average_episode_rewards, color="green")
@@ -313,6 +288,7 @@ class QAgent:
             plt.xlabel("Episode", fontsize=10)
             plt.ylabel("Average Reward", fontsize=10)
             plt.tick_params(axis='both', which='major', labelsize=10)
+            plt.savefig('figures/average_rewards.png')
             plt.show()
             
         else:
@@ -322,14 +298,11 @@ class QAgent:
             plt.xlabel("Episode", fontsize=10)
             plt.ylabel("Cumulative Reward", fontsize=10)
             plt.tick_params(axis='both', which='major', labelsize=10)
+            plt.savefig('figures/cumulative_rewards.png')
             plt.show()
-        
-        path = "figures/average_rewards.png"
-        if not os.path.exists(path):
-            os.makedirs(os.path.dirname(path), exist_ok=True)
 
-
-    def save_q_table(self, path, verbose=False):
+            
+    def save_q_table(self, path="results/q_table.npy", verbose=False):
         """Save the Q-table and hyperparameters to a file."""
         if not os.path.exists(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -354,7 +327,7 @@ class QAgent:
         self.q_table = np.load(path)
         if verbose:
             print(f"Q-table loaded from {path}.")
-
+            
 
 
 
@@ -375,13 +348,13 @@ def main():
 
     environment = DataCenterEnv(path_to_test_data=file_path)
     agent = QAgent(environment)
-    
-    agent.train(episodes=1)
-    agent.save_q_table("results/q_table.npy")
-    #agent.load_q_table("results/q_table.npy")
-    #agent.plot_metrics()
-    agent.show_rewards()
-    #agent.evaluate()
+
+    agent.train(episodes=2)
+    #agent.save_q_table()
+    #agent.show_rewards()
+    agent.evaluate(years=1)
+
+
 
 
 if __name__ == "__main__":
