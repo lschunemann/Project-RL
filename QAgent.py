@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from env import DataCenterEnv
 import statsmodels.api as sm
+import pandas as pd
 
 
 
@@ -25,7 +26,7 @@ class QAgent:
         self.adaptive_lr = adaptive_lr                              # Adaptive learning rate
         self.moving_average = moving_average                        # Moving average for reward shaping
         self.max_storage = 290                                      # Maximum storage level
-        self.max_steps = 0                                          # Number of steps
+        self.max_steps = len(self.env.price_values) * 24            # Maximum number of steps in the environment
 
         np.random.seed(random_seed)                                 # Set random seed for reproducibility
         
@@ -224,9 +225,7 @@ class QAgent:
 
                 state = next_state
                 total_reward += reward
-                
-                if done and episode == 1:
-                    self.max_steps = step
+
 
             
                 
@@ -269,6 +268,11 @@ class QAgent:
         
         if path:
             self.env = DataCenterEnv(path_to_test_data=path)
+            # Load the dataset and compute the length
+            pd_data = pd.read_excel(path)
+            self.max_steps = len(pd_data) * 24
+            
+        print(f"Total steps: {self.max_steps}")
         
         total_rewards = []
         for year in range(1, years+1):
@@ -445,7 +449,6 @@ class QAgent:
     def load_q_table(self, path, verbose=False):
         """Load the Q-table from a file."""
         self.q_table = np.load(path)
-        self.max_steps = 26280  # Hardcoded for now
         if verbose:
             print(f"Q-table loaded from {path}.")
              
@@ -468,7 +471,7 @@ def main():
         raise FileNotFoundError(f"File not found: {file_path}")
 
     environment = DataCenterEnv(path_to_test_data=file_path)
-    agent = QAgent(environment, random_seed=3)
+    agent = QAgent(environment, random_seed=8)
     
     #agent.train(episodes=1000)
     #agent.save_q_table()
