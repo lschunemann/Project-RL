@@ -14,6 +14,7 @@ The default policy is PPO, you can run different policies by passing the --agent
 ```
 python3 main.py --path PATH/TO/validate.xlsx --agent tabular_double_q
 ```
+The full list of available policies can be found in the main.py script
 
 
 ## Visualization
