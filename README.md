@@ -1,13 +1,19 @@
 ## Training
-"""python3 main.py --path PATH/TO/train.xlsx"""
+'''
+python3 main.py --path PATH/TO/train.xlsx
+'''
 
 ## Validation
-"""python3 main.py --path PATH/TO/validate.xlsx"""
+'''
+python3 main.py --path PATH/TO/validate.xlsx
+'''
 
 ## Running different policies
 The default policy is PPO, you can run different policies by passing the --agent argument:
 
-"""python3 main.py --path PATH/TO/validate.xlsx --agent tabular_double_q"""
+'''
+python3 main.py --path PATH/TO/validate.xlsx --agent tabular_double_q
+'''
 
 
 ## Visualization
