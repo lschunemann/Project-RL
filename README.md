@@ -1,3 +1,10 @@
+## Installation
+```
+conda create -n project_rl python==3.10
+conda activate project_rl
+pip install -r requirements.txt
+```
+
 ## Training
 ```
 python3 main.py --path PATH/TO/train.xlsx
