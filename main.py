@@ -6,7 +6,7 @@ import numpy as np
 # from utils import run_episodes, sample_episode
 from utils import train_agent, train_ppo
 from pathlib import Path
-from QAgent import QAgent
+from QAgent import QAgent, ImprovedQAgent
 
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
@@ -65,10 +65,14 @@ elif args.algorithm == 'buy_max':
     agent = Buy_Max()
 elif args.algorithm == 'daily_req':
     agent = Daily_Requirement()
-elif args.algorithm == 'tabular_q':
+elif args.algorithm == 'baseline_q':
     agent = QAgent(env=environment)
     agent.train(episodes=1000, bias_correction=False)
-    agent.save_q_table('models/q_table.npy')
+    agent.save_q_table('results/baseline_q_table.npy')
+elif args.algorithm == 'improved_baseline_q':
+    agent = ImprovedQAgent(env=environment)
+    agent.train(episodes=1000, bias_correction=False)
+    agent.save_q_table('results/improved_baseline_q_table.npy')
 elif args.algorithm == 'tabular_double_q':
     agent = Double_Q(environment,
                       target_update_freq=100000, 

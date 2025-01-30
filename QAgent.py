@@ -454,8 +454,37 @@ class QAgent:
              
 
 
+class ImprovedQAgent(QAgent):
+    def __init__(self, env, **kwargs):
+        super().__init__(env, **kwargs)
+        
+        self.price_bins = [0, 29.9, 43, 65, float('inf')]           # Price: quartile-based bins
+
+        
+        self.q_table = np.zeros((
+                len(self.storage_bins) - 1,
+                len(self.hour_bins),
+                len(self.action_space) 
+            ))
+
+        
+        
+    def discretize(self, observation):
+        """Discretize the observation."""
+
+        storage, price, hour, _, = observation                      # Unpack just the storage level, price, and hour
+        
+        # Discretize storage, price, and hour
+        storage_idx = np.digitize(storage, self.storage_bins) - 1
+        price_idx = np.digitize(price, self.price_bins) - 1
 
 
+        # Clip indices to avoid out-of-bound errors
+        storage_idx = np.clip(storage_idx, 0, len(self.storage_bins) - 2)
+        price_idx = np.clip(price_idx, 0, len(self.price_bins) - 2)
+        discrete_state_index = (storage_idx, price_idx, int(hour) - 1)
+        
+        return discrete_state_index
 
 
 
@@ -471,14 +500,16 @@ def main():
         raise FileNotFoundError(f"File not found: {file_path}")
 
     environment = DataCenterEnv(path_to_test_data=file_path)
-    agent = QAgent(environment, random_seed=8)
+    agent = ImprovedQAgent(environment, random_seed=3)
     
     #agent.train(episodes=1000)
     #agent.save_q_table()
     #agent.show_rewards()
 
-    agent.load_q_table("results/best_q_table.npy")
-    agent.evaluate(path="data/validate.xlsx")
+    agent.load_q_table("results/improved_q_table.npy")
+    agent.evaluate(path="data/validate.xlsx", day_to_plot=7)
+    #agent.evaluate(path="data/validate.xlsx", line_plot=True, day_to_plot=1)
+
 
 
 

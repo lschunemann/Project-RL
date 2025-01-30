@@ -1,0 +1,1 @@
+{"alpha": 0.1, "beta": 0.983, "tau": 0.15, "gamma": 0.99, "gamma_decay": 0.999, "gamma_min": 0.03, "epsilon": 1.0, "epsilon_decay": 0.995, "epsilon_min": 0.01, "random_seed": 2, "random_init": false, "adaptive_lr": true, "moving_average": "daily"}
