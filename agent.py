@@ -9,6 +9,8 @@ import time
 import os
 import json
 import matplotlib.pyplot as plt
+import random
+from collections import deque
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -553,9 +555,9 @@ class Double_Q(QAgent):
         super().__init__(environment, **kwargs)
 
         # State discretization
-        self.storage_bins = np.linspace(0, self.max_storage, 8)  # More bins for storage
+        self.storage_bins = np.linspace(0, self.max_storage, 6)  # Fewer storage bins
         self.price_bins = np.percentile(environment.price_values.flatten(), 
-                                      [0, 25, 50, 75, 90, 95, 97.5, 100])  # Price bins based on distribution
+                               [0, 33, 66, 100])  
         self.hour_bins = np.arange(1, 25)
 
         self.q = np.zeros((
@@ -577,6 +579,14 @@ class Double_Q(QAgent):
         
         # Add reward tracking
         self.episode_rewards = []
+
+        # Experience replay parameters
+        self.buffer_size = 10000
+        self.batch_size = 32
+        self.experience_buffer = deque(maxlen=self.buffer_size)
+        self.priorities = deque(maxlen=self.buffer_size)
+        self.alpha_pr = 0.6  # Priority exponent
+        self.beta_pr = 0.4   # Importance sampling weight
 
         # Exploration parameters
         self.initial_epsilon = kwargs.get('epsilon', 1.0)
@@ -601,6 +611,60 @@ class Double_Q(QAgent):
         
         # Add visit counts for exploration
         self.state_visits = np.zeros_like(self.q)
+
+    def add_experience(self, state, action, reward, next_state, td_error):
+        """Add experience to buffer with priority"""
+        priority = (abs(td_error) + 1e-6) ** self.alpha  # Prioritized experience
+        self.experience_buffer.append((state, action, reward, next_state))
+        self.priorities.append(priority)
+    
+    def sample_experience(self):
+        """Sample batch of experiences based on priorities"""
+        if len(self.experience_buffer) < self.batch_size:
+            return None
+        
+        # Convert priorities to numpy array for efficient operations
+        priorities = np.array(self.priorities)
+        probs = priorities / priorities.sum()
+        
+        # Sample indices based on priorities
+        indices = np.random.choice(
+            len(self.experience_buffer),
+            size=self.batch_size,
+            p=probs
+        )
+        
+        # Calculate importance sampling weights
+        weights = (len(self.experience_buffer) * probs[indices]) ** -self.beta_pr
+        weights = weights / weights.max()  # Normalize weights
+        
+        # Get experiences
+        experiences = [self.experience_buffer[idx] for idx in indices]
+        return experiences, weights
+    
+    def update_from_experience(self):
+        """Learn from sampled experiences"""
+        sample = self.sample_experience()
+        if sample is None:
+            return
+        
+        experiences, weights = sample
+        
+        for exp, weight in zip(experiences, weights):
+            state, action_idx, reward, next_state = exp
+            
+            # Get next action using behavior network
+            next_actions = np.argsort(self.q[next_state])[-3:]
+            next_q = 0
+            for a in next_actions:
+                next_q += self.q_target[next_state + (a,)] / 3
+            
+            # Calculate TD target and error
+            td_target = reward + self.gamma * next_q
+            td_error = td_target - self.q[state + (action_idx,)]
+            
+            # Update Q-value with importance sampling weight
+            self.q[state + (action_idx,)] += self.alpha_pr * weight * td_error
 
     def plot_rewards(self):
         """Plot the reward history with moving average"""
@@ -668,32 +732,22 @@ class Double_Q(QAgent):
             return np.argmax(ucb_values)
         
     def reward_shaping(self, reward, action, storage, price, hour):
-        """Improved reward shaping focusing on cost minimization"""
-        # Normalize storage relative to daily demand
+        """Simplified reward shaping focusing on key objectives"""
+        shaped_reward = reward / 1000  # Scale down original reward
+        
+        # Storage management
         storage_ratio = storage / self.env.daily_energy_demand
         hours_left = 24 - hour
         
-        # Normalize price
-        price_normalized = (price - self.min_price) / (self.max_price - self.min_price)
+        if storage_ratio < 0.8 and hours_left < 12:
+            # Encourage buying when storage is low and time is running out
+            shaped_reward += 100 * action if action > 0 else 0
         
-        shaped_reward = reward  # Start with original reward
+        if storage_ratio > 1.2 and price > self.price_mean:
+            # Encourage selling excess at high prices
+            shaped_reward += 100 * -action if action < 0 else 0
         
-        # Storage management component
-        if storage < self.env.daily_energy_demand and hours_left > 0:
-            storage_urgency = (1 - storage_ratio) * (1 / (hours_left + 1))
-            shaped_reward += storage_urgency * 1000  # Encourage maintaining sufficient storage
-        
-        # Price-based component
-        if action > 0:  # Buying
-            # Reward buying at low prices
-            price_factor = 1 - price_normalized
-            shaped_reward += price_factor * 500
-        elif action < 0:  # Sellingß
-            # Reward selling at high prices
-            price_factor = price_normalized
-            shaped_reward += price_factor * 500
-        
-        return shaped_reward / 1000  # Scale down the final reward
+        return shaped_reward
         
     def train(self, episodes=1000, verbose=True):
         print(f"Training for {episodes} episodes...")
@@ -757,6 +811,13 @@ class Double_Q(QAgent):
                 next_best_action = np.argmax(self.q[next_state])
                 td_target = shaped_reward + self.gamma * self.q_target[next_state + (next_best_action,)]
                 td_error = td_target - self.q[state + (action_idx,)]
+
+                # Add experience to buffer
+                self.add_experience(state, action_idx, shaped_reward, next_state, td_error)
+                
+                # Learn from experiences
+                if self.total_steps % 4 == 0:  # Update every 4 steps
+                    self.update_from_experience()
                 
                 # Adaptive learning rate
                 visit_count = self.state_visits[state + (action_idx,)]
@@ -786,6 +847,9 @@ class Double_Q(QAgent):
                 self.epsilon_min,
                 self.epsilon * self.epsilon_decay
             )
+
+            # Increase beta towards 1
+            self.beta_pr = min(1.0, self.beta + 1/(episodes * 0.8))
             
             # Calculate action distribution
             total_actions = episode_steps
